@@ -6,7 +6,7 @@
   "author": "alphasec",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "cors": "^2.8.5",
     "pg": "^8.11.5"
   },
