@@ -1,21 +1,29 @@
-const express = require('express');
-const path = require('path');
-const indexRouter = require('./routes/index');
+const express = require("express");
+const path = require("path");
+const cors = require("cors");
+
+const indexRouter = require("./routes/index");
+const patientsRouter = require("./routes/patients");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+// ✅ Middleware (must be before routes)
+app.use(cors());
+app.use(express.json());
 
 // Serve static files from the "public" directory
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, "public")));
 
-// Use the router for handling routes
-app.use('/', indexRouter);
+// Routes
+app.use("/", indexRouter);
+app.use("/api/patients", patientsRouter);
 
 // Catch-all route for handling 404 errors
-app.use((req, res, next) => {
-    res.status(404).sendFile(path.join(__dirname, 'views', '404.html'));
-  });
+app.use((req, res) => {
+  res.status(404).sendFile(path.join(__dirname, "views", "404.html"));
+});
 
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}/`);
+  console.log(`Server running on port ${PORT}`);
 });
