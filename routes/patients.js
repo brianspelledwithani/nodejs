@@ -11,6 +11,34 @@ function phoneToDigits(phone) {
 }
 
 /**
+ * Treatment labels coming from the React UI (strings in suggestedTreatments[])
+ * We map these to boolean columns in Postgres.
+ */
+const TREATMENT_LABELS = {
+  CBTI: "Cognitive Behavioral Therapy for Insomnia",
+  CPAP_COMISA:
+    "CPAP Compliance Program for COMISA (Co-morbid Insomnia with Sleep Apnea)",
+  SLEEP_EEG: "Sleep EEG for Insomnia",
+  ZEPBOUND_OSA: "Zepbound Rx for OSA",
+  NATURAL_PRODUCTS: "Natural Products for Insomnia",
+  INSOMNIA_MEDS_MGMT:
+    "Insomnia Medications Management* (help patients treat insomnia without addictive medications)",
+};
+
+function treatmentsToFlags(suggestedTreatments) {
+  const treatments = Array.isArray(suggestedTreatments) ? suggestedTreatments : [];
+
+  return {
+    tx_cbti: treatments.includes(TREATMENT_LABELS.CBTI),
+    tx_cpap_comisa: treatments.includes(TREATMENT_LABELS.CPAP_COMISA),
+    tx_sleep_eeg: treatments.includes(TREATMENT_LABELS.SLEEP_EEG),
+    tx_zepbound_osa: treatments.includes(TREATMENT_LABELS.ZEPBOUND_OSA),
+    tx_natural_products: treatments.includes(TREATMENT_LABELS.NATURAL_PRODUCTS),
+    tx_insomnia_meds_mgmt: treatments.includes(TREATMENT_LABELS.INSOMNIA_MEDS_MGMT),
+  };
+}
+
+/**
  * POST /api/patients
  * (Logged-in flow later)
  * For now it expects provider_id to be provided in the request body.
@@ -28,13 +56,8 @@ router.post("/", async (req, res) => {
       email,
       isiScore,
 
-      // Treatment flags (booleans)
-      tx_cbti = false,
-      tx_cpap_comisa = false,
-      tx_sleep_eeg = false,
-      tx_zepbound_osa = false,
-      tx_natural_products = false,
-      tx_insomnia_meds_mgmt = false,
+      // UI sends: suggestedTreatments: string[]
+      suggestedTreatments = [],
     } = req.body || {};
 
     if (!provider_id) return res.status(400).json({ error: "provider_id is required" });
@@ -50,6 +73,15 @@ router.post("/", async (req, res) => {
     if (isi !== null && (!Number.isFinite(isi) || isi < 0 || isi > 28)) {
       return res.status(400).json({ error: "isiScore must be 0-28" });
     }
+
+    const {
+      tx_cbti,
+      tx_cpap_comisa,
+      tx_sleep_eeg,
+      tx_zepbound_osa,
+      tx_natural_products,
+      tx_insomnia_meds_mgmt,
+    } = treatmentsToFlags(suggestedTreatments);
 
     const result = await pool.query(
       `
@@ -102,7 +134,7 @@ router.post("/", async (req, res) => {
  * We accept providerPhone, look up provider_id from authorizer_users.phone_number,
  * then insert patient under that provider_id.
  *
- * Body: { providerPhone, name, dateOfBirth, mobile, email, isiScore, tx_* booleans... }
+ * Body: { providerPhone, name, dateOfBirth, mobile, email, isiScore, suggestedTreatments: string[] }
  */
 router.post("/public", async (req, res) => {
   try {
@@ -115,12 +147,8 @@ router.post("/public", async (req, res) => {
       email,
       isiScore,
 
-      tx_cbti = false,
-      tx_cpap_comisa = false,
-      tx_sleep_eeg = false,
-      tx_zepbound_osa = false,
-      tx_natural_products = false,
-      tx_insomnia_meds_mgmt = false,
+      // UI sends: suggestedTreatments: string[]
+      suggestedTreatments = [],
     } = req.body || {};
 
     if (!providerPhone || !String(providerPhone).trim()) {
@@ -152,6 +180,15 @@ router.post("/public", async (req, res) => {
     if (isi !== null && (!Number.isFinite(isi) || isi < 0 || isi > 28)) {
       return res.status(400).json({ error: "isiScore must be 0-28" });
     }
+
+    const {
+      tx_cbti,
+      tx_cpap_comisa,
+      tx_sleep_eeg,
+      tx_zepbound_osa,
+      tx_natural_products,
+      tx_insomnia_meds_mgmt,
+    } = treatmentsToFlags(suggestedTreatments);
 
     const result = await pool.query(
       `
