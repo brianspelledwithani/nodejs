@@ -169,11 +169,13 @@ async function createAuthorizerUser(input, healthieProviderId) {
           given_name: input.firstName,
           family_name: input.lastName,
 
-          // ✅ REQUIRED: save provider phone into Authorizer phone_number
+          // ✅ Save provider phone into Authorizer phone_number
           phone_number: input.phone,
 
-          // ✅ You want practice name stored in Authorizer picture field
-          picture: input.practiceName,
+          // ✅ OPTION 1: store practice name safely in app_data (JSON)
+          app_data: {
+            practice_name: input.practiceName,
+          },
 
           // ✅ Save Healthie provider id into Authorizer profile nickname
           nickname: String(healthieProviderId),
