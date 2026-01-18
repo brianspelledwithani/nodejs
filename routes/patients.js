@@ -3,14 +3,6 @@ const router = express.Router();
 const { pool } = require("./db");
 
 /**
- * Helper: normalize a phone number to digits only.
- * Authorizer stores phone_number like: 9154746142
- */
-function phoneToDigits(phone) {
-  return String(phone || "").replace(/\D/g, "");
-}
-
-/**
  * Treatment labels coming from the React UI (strings in suggestedTreatments[])
  * We map these to boolean columns in Postgres.
  */
@@ -42,11 +34,13 @@ function treatmentsToFlags(suggestedTreatments) {
  * POST /api/patients
  * (Logged-in flow later)
  * For now it expects provider_id to be provided in the request body.
+ *
+ * NOTE: if you are switching your "provider_id" meaning to Healthie provider id,
+ * this route will still work, but now "provider_id" should be the Healthie ID.
  */
 router.post("/", async (req, res) => {
   try {
     const {
-      // REQUIRED (for now we pass it in; later we’ll pull from Authorizer token)
       provider_id,
       name,
       dateOfBirth,
@@ -131,15 +125,25 @@ router.post("/", async (req, res) => {
 /**
  * POST /api/patients/public
  * Public flow: provider can add patients WITHOUT signing in.
- * We accept providerPhone, look up provider_id from authorizer_users.phone_number,
- * then insert patient under that provider_id.
  *
- * Body: { providerPhone, name, dateOfBirth, mobile, email, isiScore, suggestedTreatments: string[] }
+ * NEW FLOW:
+ * - Frontend sends the selected practice's Healthie Provider ID
+ * - We store that ID into patients.provider_id
+ *
+ * Body:
+ * {
+ *   healthie_provider_id: "12345",
+ *   practiceName: "Autonoos LLC Clinic" (optional - for display only),
+ *   name, dateOfBirth, mobile,
+ *   email, isiScore,
+ *   suggestedTreatments: string[]
+ * }
  */
 router.post("/public", async (req, res) => {
   try {
     const {
-      providerPhone,
+      healthie_provider_id,
+      practiceName, // optional (not used for lookup; just informational)
       name,
       dateOfBirth,
       mobile,
@@ -147,31 +151,17 @@ router.post("/public", async (req, res) => {
       email,
       isiScore,
 
-      // UI sends: suggestedTreatments: string[]
       suggestedTreatments = [],
     } = req.body || {};
 
-    if (!providerPhone || !String(providerPhone).trim()) {
-      return res.status(400).json({ error: "providerPhone is required" });
+    if (!healthie_provider_id || !String(healthie_provider_id).trim()) {
+      return res.status(400).json({ error: "healthie_provider_id is required" });
     }
     if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
     if (!dateOfBirth) return res.status(400).json({ error: "dateOfBirth is required" });
     if (!mobile || !mobile.trim()) return res.status(400).json({ error: "mobile is required" });
 
-    const providerPhoneDigits = phoneToDigits(providerPhone);
-
-    // Find provider in Authorizer by phone_number
-    const providerResult = await pool.query(
-      `SELECT id FROM authorizer_users WHERE phone_number = $1 LIMIT 1`,
-      [providerPhoneDigits]
-    );
-
-    if (providerResult.rowCount === 0) {
-      return res.status(404).json({ error: "Provider not found for that phone number" });
-    }
-
-    const provider_id = providerResult.rows[0].id; // Authorizer user id (TEXT)
-
+    // Optional: validate isiScore
     const isi =
       isiScore === "" || isiScore === null || isiScore === undefined
         ? null
@@ -189,6 +179,9 @@ router.post("/public", async (req, res) => {
       tx_natural_products,
       tx_insomnia_meds_mgmt,
     } = treatmentsToFlags(suggestedTreatments);
+
+    // Store Healthie provider id into patients.provider_id
+    const provider_id = String(healthie_provider_id).trim();
 
     const result = await pool.query(
       `
@@ -228,7 +221,12 @@ router.post("/public", async (req, res) => {
       ]
     );
 
-    return res.status(201).json({ patientId: result.rows[0].id, status: "created" });
+    return res.status(201).json({
+      patientId: result.rows[0].id,
+      status: "created",
+      practiceName: (practiceName || "").trim() || undefined,
+      healthie_provider_id: provider_id,
+    });
   } catch (err) {
     console.error("POST /api/patients/public error:", err);
     return res.status(500).json({ error: "Server error" });
