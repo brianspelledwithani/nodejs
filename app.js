@@ -4,22 +4,34 @@ const cors = require("cors");
 
 const indexRouter = require("./routes/index");
 const patientsRouter = require("./routes/patients");
+const providerRouter = require("./routes/provider");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ Middleware (must be before routes)
-app.use(cors());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_ORIGIN || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (!allowedOrigins.length || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
-// Serve static files from the "public" directory
 app.use(express.static(path.join(__dirname, "public")));
 
-// Routes
 app.use("/", indexRouter);
 app.use("/api/patients", patientsRouter);
+app.use("/api/provider", providerRouter);
 
-// Catch-all route for handling 404 errors
 app.use((req, res) => {
   res.status(404).sendFile(path.join(__dirname, "views", "404.html"));
 });
