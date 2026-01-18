@@ -30,7 +30,11 @@ class ApiError extends Error {
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
-    throw new ApiError(`Missing required environment variable: ${name}`, 500, "CONFIG_ERROR");
+    throw new ApiError(
+      `Missing required environment variable: ${name}`,
+      500,
+      "CONFIG_ERROR"
+    );
   }
   return value;
 }
@@ -105,13 +109,17 @@ async function createReferringProvider(input) {
       getGraphQlErrorMessage(body, "Unable to create referring provider in Healthie."),
       502,
       "HEALTHIE_ERROR",
-      body?.errors,
+      body?.errors
     );
   }
 
   const result = body?.data?.createReferringPhysician;
   if (!result) {
-    throw new ApiError("Unable to create referring provider in Healthie.", 502, "HEALTHIE_ERROR");
+    throw new ApiError(
+      "Unable to create referring provider in Healthie.",
+      502,
+      "HEALTHIE_ERROR"
+    );
   }
 
   const messages = Array.isArray(result.messages) ? result.messages : [];
@@ -122,7 +130,7 @@ async function createReferringProvider(input) {
       message || "Unable to create referring provider in Healthie.",
       422,
       "HEALTHIE_CREATE_FAILED",
-      messages,
+      messages
     );
   }
 
@@ -149,6 +157,10 @@ async function createAuthorizerUser(input) {
           password: input.password,
           confirm_password: input.password,
           roles: ["user"],
+
+          // ✅ Correct Authorizer field names
+          given_name: input.firstName,
+          family_name: input.lastName,
         },
       },
     }),
@@ -182,6 +194,7 @@ function handleApiError(res, error) {
 
 router.post("/signup", async (req, res) => {
   const input = normalizeSignupInput(req.body);
+
   const missing = validateFields(input, [
     "firstName",
     "lastName",
