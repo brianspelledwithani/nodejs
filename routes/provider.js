@@ -1,6 +1,6 @@
 const express = require("express");
-
 const router = express.Router();
+const db = require("../db"); // adjust if your DB helper path differs
 
 const HEALTHIE_MUTATION = `
   mutation CreateReferringProvider($input: createReferringPhysicianInput!) {
@@ -207,6 +207,39 @@ function handleApiError(res, error) {
     details: error?.details,
   });
 }
+
+router.get("/practices", async (_req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT app_data FROM authorizer_users WHERE app_data IS NOT NULL"
+    );
+
+    const practices = new Set();
+
+    for (const row of result.rows) {
+      try {
+        const data =
+          typeof row.app_data === "string"
+            ? JSON.parse(row.app_data)
+            : row.app_data;
+
+        const name =
+          typeof data?.practice_name === "string"
+            ? data.practice_name.trim()
+            : "";
+
+        if (name) practices.add(name);
+      } catch (_err) {
+        // ignore malformed app_data
+      }
+    }
+
+    res.json({ practices: Array.from(practices).sort() });
+  } catch (err) {
+    console.error("load practices failed", err);
+    res.status(500).json({ message: "Unable to load practices." });
+  }
+});
 
 router.post("/signup", async (req, res) => {
   const input = normalizeSignupInput(req.body);
