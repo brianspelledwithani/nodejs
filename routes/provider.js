@@ -169,16 +169,15 @@ async function createAuthorizerUser(input, healthieProviderId) {
           given_name: input.firstName,
           family_name: input.lastName,
 
-          // ✅ Save provider phone into Authorizer phone_number
-          phone_number: input.phone,
-
-          // ✅ OPTION 1: store practice name safely in app_data (JSON)
+          // ✅ Put practice name back in app_data (safe)
           app_data: {
             practice_name: input.practiceName,
           },
 
           // ✅ Save Healthie provider id into Authorizer profile nickname
           nickname: String(healthieProviderId),
+
+          // ❌ phone_number intentionally removed to isolate the issue
         },
       },
     }),
