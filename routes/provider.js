@@ -64,7 +64,7 @@ function normalizeSignupInput(payload = {}) {
     practiceName: toTrimmedString(payload.practiceName),
     npi: toTrimmedString(payload.npi).replace(/\D/g, ""),
     email: toTrimmedString(payload.email),
-    phone: toTrimmedString(payload.phone).replace(/\D/g, ""),
+    phone: toTrimmedString(payload.phone).replace(/\D/g, ""), // digits only
     password: typeof payload.password === "string" ? payload.password : "",
   };
 }
@@ -169,15 +169,14 @@ async function createAuthorizerUser(input, healthieProviderId) {
           given_name: input.firstName,
           family_name: input.lastName,
 
-          // ✅ Put practice name back in app_data (safe)
+          // ✅ Store everything custom in app_data (safe during signup)
           app_data: {
             practice_name: input.practiceName,
+            phone: input.phone, // digits-only
+            healthie_provider_id: String(healthieProviderId),
           },
 
-          // ✅ Save Healthie provider id into Authorizer profile nickname
-          nickname: String(healthieProviderId),
-
-          // ❌ phone_number intentionally removed to isolate the issue
+          // ❌ nickname intentionally not used anymore
         },
       },
     }),
@@ -230,7 +229,7 @@ router.post("/signup", async (req, res) => {
     // 1) Create provider in Healthie first (get provider id)
     const healthie = await createReferringProvider(input);
 
-    // 2) Create Authorizer user and set nickname to Healthie provider id
+    // 2) Create Authorizer user (store Healthie id in app_data)
     const authorizer = await createAuthorizerUser(input, healthie.id);
 
     return res.json({ healthie, authorizer });
