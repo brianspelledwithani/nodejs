@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const db = require("../db"); // adjust if your DB helper path differs
+const { pool } = require("./db"); // ✅ matches patients.js
 
 const HEALTHIE_MUTATION = `
   mutation CreateReferringProvider($input: createReferringPhysicianInput!) {
@@ -175,8 +175,6 @@ async function createAuthorizerUser(input, healthieProviderId) {
             phone: input.phone, // digits-only
             healthie_provider_id: String(healthieProviderId),
           },
-
-          // ❌ nickname intentionally not used anymore
         },
       },
     }),
@@ -208,9 +206,10 @@ function handleApiError(res, error) {
   });
 }
 
+// ✅ pulls practice_name values from Authorizer users
 router.get("/practices", async (_req, res) => {
   try {
-    const result = await db.query(
+    const result = await pool.query(
       "SELECT app_data FROM authorizer_users WHERE app_data IS NOT NULL"
     );
 
