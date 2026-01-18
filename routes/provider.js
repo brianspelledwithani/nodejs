@@ -125,7 +125,10 @@ async function createReferringProvider(input) {
   const messages = Array.isArray(result.messages) ? result.messages : [];
   const message = messages.find((entry) => entry?.message)?.message || "";
 
-  if (!result.referring_physician && !result.duplicated_physician) {
+  const providerId =
+    result?.referring_physician?.id || result?.duplicated_physician?.id || null;
+
+  if (!providerId) {
     throw new ApiError(
       message || "Unable to create referring provider in Healthie.",
       422,
@@ -134,10 +137,14 @@ async function createReferringProvider(input) {
     );
   }
 
-  return { duplicated: Boolean(result.duplicated_physician), message: message || undefined };
+  return {
+    duplicated: Boolean(result.duplicated_physician),
+    message: message || undefined,
+    id: String(providerId), // ✅ Healthie provider id
+  };
 }
 
-async function createAuthorizerUser(input) {
+async function createAuthorizerUser(input, healthieProviderId) {
   const authorizerUrl =
     process.env.AUTHORIZER_GRAPHQL_URL ||
     "https://authorizer-production-8e06.up.railway.app/graphql";
@@ -161,6 +168,9 @@ async function createAuthorizerUser(input) {
           // ✅ Correct Authorizer field names
           given_name: input.firstName,
           family_name: input.lastName,
+
+          // ✅ Save Healthie provider id into Authorizer profile nickname
+          nickname: String(healthieProviderId),
         },
       },
     }),
@@ -210,8 +220,12 @@ router.post("/signup", async (req, res) => {
   }
 
   try {
+    // 1) Create provider in Healthie first (get provider id)
     const healthie = await createReferringProvider(input);
-    const authorizer = await createAuthorizerUser(input);
+
+    // 2) Create Authorizer user and set nickname to Healthie provider id
+    const authorizer = await createAuthorizerUser(input, healthie.id);
+
     return res.json({ healthie, authorizer });
   } catch (error) {
     return handleApiError(res, error);
