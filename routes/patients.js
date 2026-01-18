@@ -30,13 +30,23 @@ function treatmentsToFlags(suggestedTreatments) {
   };
 }
 
+function parseJsonSafe(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizePracticeName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 /**
  * POST /api/patients
- * (Logged-in flow later)
- * For now it expects provider_id to be provided in the request body.
- *
- * NOTE: if you are switching your "provider_id" meaning to Healthie provider id,
- * this route will still work, but now "provider_id" should be the Healthie ID.
+ * Logged-in flow later. For now expects provider_id in request body.
+ * NOTE: If you are transitioning provider_id to mean Healthie provider id, this still works.
  */
 router.post("/", async (req, res) => {
   try {
@@ -45,12 +55,8 @@ router.post("/", async (req, res) => {
       name,
       dateOfBirth,
       mobile,
-
-      // OPTIONAL
       email,
       isiScore,
-
-      // UI sends: suggestedTreatments: string[]
       suggestedTreatments = [],
     } = req.body || {};
 
@@ -68,14 +74,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "isiScore must be 0-28" });
     }
 
-    const {
-      tx_cbti,
-      tx_cpap_comisa,
-      tx_sleep_eeg,
-      tx_zepbound_osa,
-      tx_natural_products,
-      tx_insomnia_meds_mgmt,
-    } = treatmentsToFlags(suggestedTreatments);
+    const flags = treatmentsToFlags(suggestedTreatments);
 
     const result = await pool.query(
       `
@@ -100,18 +99,18 @@ router.post("/", async (req, res) => {
       RETURNING id
       `,
       [
-        provider_id,
+        String(provider_id).trim(),
         name.trim(),
         dateOfBirth, // expects YYYY-MM-DD
         mobile.trim(),
         (email || "").trim() || null,
         isi,
-        Boolean(tx_cbti),
-        Boolean(tx_cpap_comisa),
-        Boolean(tx_sleep_eeg),
-        Boolean(tx_zepbound_osa),
-        Boolean(tx_natural_products),
-        Boolean(tx_insomnia_meds_mgmt),
+        Boolean(flags.tx_cbti),
+        Boolean(flags.tx_cpap_comisa),
+        Boolean(flags.tx_sleep_eeg),
+        Boolean(flags.tx_zepbound_osa),
+        Boolean(flags.tx_natural_products),
+        Boolean(flags.tx_insomnia_meds_mgmt),
       ]
     );
 
@@ -126,42 +125,64 @@ router.post("/", async (req, res) => {
  * POST /api/patients/public
  * Public flow: provider can add patients WITHOUT signing in.
  *
- * NEW FLOW:
- * - Frontend sends the selected practice's Healthie Provider ID
- * - We store that ID into patients.provider_id
+ * NEW FLOW (practice dropdown):
+ * - Frontend sends practice_name (string)
+ * - Backend looks up healthie_provider_id from authorizer_users.app_data
+ * - Insert patient with provider_id = healthie_provider_id
  *
  * Body:
- * {
- *   healthie_provider_id: "12345",
- *   practiceName: "Autonoos LLC Clinic" (optional - for display only),
- *   name, dateOfBirth, mobile,
- *   email, isiScore,
- *   suggestedTreatments: string[]
- * }
+ * { practiceName, name, dateOfBirth, mobile, email, isiScore, suggestedTreatments }
  */
 router.post("/public", async (req, res) => {
   try {
     const {
-      healthie_provider_id,
-      practiceName, // optional (not used for lookup; just informational)
+      practiceName,
       name,
       dateOfBirth,
       mobile,
-
       email,
       isiScore,
-
       suggestedTreatments = [],
     } = req.body || {};
 
-    if (!healthie_provider_id || !String(healthie_provider_id).trim()) {
-      return res.status(400).json({ error: "healthie_provider_id is required" });
+    if (!practiceName || !String(practiceName).trim()) {
+      return res.status(400).json({ error: "practiceName is required" });
     }
     if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
     if (!dateOfBirth) return res.status(400).json({ error: "dateOfBirth is required" });
     if (!mobile || !mobile.trim()) return res.status(400).json({ error: "mobile is required" });
 
-    // Optional: validate isiScore
+    const wantedPractice = normalizePracticeName(practiceName);
+
+    // Pull app_data for all users that have it, then find the matching practice_name
+    const providerRows = await pool.query(
+      `SELECT app_data FROM authorizer_users WHERE app_data IS NOT NULL`
+    );
+
+    let healthieProviderId = null;
+
+    for (const row of providerRows.rows) {
+      const data =
+        typeof row.app_data === "string" ? parseJsonSafe(row.app_data) : row.app_data;
+
+      const practice =
+        typeof data?.practice_name === "string" ? normalizePracticeName(data.practice_name) : "";
+
+      if (practice && practice === wantedPractice) {
+        const hid = data?.healthie_provider_id ?? data?.healthie_providerId ?? data?.healthie_id;
+        if (hid !== undefined && hid !== null && String(hid).trim()) {
+          healthieProviderId = String(hid).trim();
+          break;
+        }
+      }
+    }
+
+    if (!healthieProviderId) {
+      return res.status(404).json({
+        error: "Practice not found (no healthie_provider_id stored for that practice).",
+      });
+    }
+
     const isi =
       isiScore === "" || isiScore === null || isiScore === undefined
         ? null
@@ -171,17 +192,10 @@ router.post("/public", async (req, res) => {
       return res.status(400).json({ error: "isiScore must be 0-28" });
     }
 
-    const {
-      tx_cbti,
-      tx_cpap_comisa,
-      tx_sleep_eeg,
-      tx_zepbound_osa,
-      tx_natural_products,
-      tx_insomnia_meds_mgmt,
-    } = treatmentsToFlags(suggestedTreatments);
+    const flags = treatmentsToFlags(suggestedTreatments);
 
     // Store Healthie provider id into patients.provider_id
-    const provider_id = String(healthie_provider_id).trim();
+    const provider_id = healthieProviderId;
 
     const result = await pool.query(
       `
@@ -212,19 +226,19 @@ router.post("/public", async (req, res) => {
         mobile.trim(),
         (email || "").trim() || null,
         isi,
-        Boolean(tx_cbti),
-        Boolean(tx_cpap_comisa),
-        Boolean(tx_sleep_eeg),
-        Boolean(tx_zepbound_osa),
-        Boolean(tx_natural_products),
-        Boolean(tx_insomnia_meds_mgmt),
+        Boolean(flags.tx_cbti),
+        Boolean(flags.tx_cpap_comisa),
+        Boolean(flags.tx_sleep_eeg),
+        Boolean(flags.tx_zepbound_osa),
+        Boolean(flags.tx_natural_products),
+        Boolean(flags.tx_insomnia_meds_mgmt),
       ]
     );
 
     return res.status(201).json({
       patientId: result.rows[0].id,
       status: "created",
-      practiceName: (practiceName || "").trim() || undefined,
+      practiceName: String(practiceName).trim(),
       healthie_provider_id: provider_id,
     });
   } catch (err) {
