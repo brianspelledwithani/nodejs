@@ -169,9 +169,13 @@ async function createAuthorizerUser(input, healthieProviderId) {
           given_name: input.firstName,
           family_name: input.lastName,
 
-          // ✅ ONLY change we are testing: phone_number
-          // If Authorizer expects E.164, this may still fail — but this narrows it down.
+          // ✅ Save provider phone into Authorizer phone_number
           phone_number: input.phone,
+
+          // ✅ OPTION 1: store practice name safely in app_data (JSON)
+          app_data: {
+            practice_name: input.practiceName,
+          },
 
           // ✅ Save Healthie provider id into Authorizer profile nickname
           nickname: String(healthieProviderId),
