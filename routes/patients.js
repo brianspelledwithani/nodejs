@@ -93,8 +93,7 @@ async function fetchAuthorizerProfile(accessToken) {
   const body = parseJsonSafe(await response.text());
 
   if (!response.ok || body?.errors?.length) {
-    const message =
-      body?.errors?.[0]?.message || "Unable to verify session.";
+    const message = body?.errors?.[0]?.message || "Unable to verify session.";
     const error = new Error(message);
     error.status = 401;
     throw error;
@@ -117,14 +116,12 @@ async function fetchAuthorizerProfile(accessToken) {
 router.get("/", async (req, res) => {
   try {
     const token = getBearerToken(req);
-    if (!token) {
-      return res.status(401).json({ error: "Missing access token." });
-    }
+    if (!token) return res.status(401).json({ error: "Missing access token." });
 
     let profile;
     try {
       profile = await fetchAuthorizerProfile(token);
-    } catch (error) {
+    } catch (_error) {
       return res.status(401).json({ error: "Invalid or expired token." });
     }
 
@@ -132,9 +129,7 @@ router.get("/", async (req, res) => {
     const providerId = extractHealthieProviderId(appData);
 
     if (!providerId) {
-      return res.status(403).json({
-        error: "No healthie_provider_id found for this user.",
-      });
+      return res.status(403).json({ error: "No healthie_provider_id found for this user." });
     }
 
     const result = await pool.query(
@@ -148,7 +143,6 @@ router.get("/", async (req, res) => {
     return res.status(500).json({ error: "Server error" });
   }
 });
-
 
 router.get("/:id", async (req, res) => {
   try {
@@ -184,22 +178,18 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-
-
-
-
-
-
 /**
  * POST /api/patients
- * Logged-in flow later. For now expects provider_id in request body.
- * NOTE: If you are transitioning provider_id to mean Healthie provider id, this still works.
+ * Signed-in provider flow.
+ * NOTE: Right now you still accept provider_id from the request body.
+ * If you want it to ALWAYS default to the logged-in provider, tell me and I’ll lock it down.
  */
 router.post("/", async (req, res) => {
   try {
     const {
-      provider_id,
-      name,
+      provider_id, // Healthie provider id
+      firstName,
+      lastName,
       dateOfBirth,
       mobile,
       email,
@@ -208,9 +198,13 @@ router.post("/", async (req, res) => {
     } = req.body || {};
 
     if (!provider_id) return res.status(400).json({ error: "provider_id is required" });
-    if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
+    if (!firstName || !String(firstName).trim())
+      return res.status(400).json({ error: "firstName is required" });
+    if (!lastName || !String(lastName).trim())
+      return res.status(400).json({ error: "lastName is required" });
     if (!dateOfBirth) return res.status(400).json({ error: "dateOfBirth is required" });
-    if (!mobile || !mobile.trim()) return res.status(400).json({ error: "mobile is required" });
+    if (!mobile || !String(mobile).trim())
+      return res.status(400).json({ error: "mobile is required" });
 
     const isi =
       isiScore === "" || isiScore === null || isiScore === undefined
@@ -227,7 +221,8 @@ router.post("/", async (req, res) => {
       `
       INSERT INTO patients (
         provider_id,
-        full_name,
+        first_name,
+        last_name,
         date_of_birth,
         mobile,
         email,
@@ -240,16 +235,17 @@ router.post("/", async (req, res) => {
         tx_insomnia_meds_mgmt
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,
-        $7,$8,$9,$10,$11,$12
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,$12,$13
       )
       RETURNING id
       `,
       [
         String(provider_id).trim(),
-        name.trim(),
+        String(firstName).trim(),
+        String(lastName).trim(),
         dateOfBirth, // expects YYYY-MM-DD
-        mobile.trim(),
+        String(mobile).trim(),
         (email || "").trim() || null,
         isi,
         Boolean(flags.tx_cbti),
@@ -270,21 +266,18 @@ router.post("/", async (req, res) => {
 
 /**
  * POST /api/patients/public
- * Public flow: provider can add patients WITHOUT signing in.
- *
- * NEW FLOW (practice dropdown):
- * - Frontend sends practice_name (string)
- * - Backend looks up healthie_provider_id from authorizer_users.app_data
- * - Insert patient with provider_id = healthie_provider_id
+ * Public flow: practice dropdown.
+ * Frontend sends practiceName; backend finds healthie_provider_id in authorizer_users.app_data.
  *
  * Body:
- * { practiceName, name, dateOfBirth, mobile, email, isiScore, suggestedTreatments }
+ * { practiceName, firstName, lastName, dateOfBirth, mobile, email, isiScore, suggestedTreatments }
  */
 router.post("/public", async (req, res) => {
   try {
     const {
       practiceName,
-      name,
+      firstName,
+      lastName,
       dateOfBirth,
       mobile,
       email,
@@ -295,13 +288,16 @@ router.post("/public", async (req, res) => {
     if (!practiceName || !String(practiceName).trim()) {
       return res.status(400).json({ error: "practiceName is required" });
     }
-    if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
+    if (!firstName || !String(firstName).trim())
+      return res.status(400).json({ error: "firstName is required" });
+    if (!lastName || !String(lastName).trim())
+      return res.status(400).json({ error: "lastName is required" });
     if (!dateOfBirth) return res.status(400).json({ error: "dateOfBirth is required" });
-    if (!mobile || !mobile.trim()) return res.status(400).json({ error: "mobile is required" });
+    if (!mobile || !String(mobile).trim())
+      return res.status(400).json({ error: "mobile is required" });
 
     const wantedPractice = normalizePracticeName(practiceName);
 
-    // Pull app_data for all users that have it, then find the matching practice_name
     const providerRows = await pool.query(
       `SELECT app_data FROM authorizer_users WHERE app_data IS NOT NULL`
     );
@@ -309,8 +305,7 @@ router.post("/public", async (req, res) => {
     let healthieProviderId = null;
 
     for (const row of providerRows.rows) {
-      const data =
-        typeof row.app_data === "string" ? parseJsonSafe(row.app_data) : row.app_data;
+      const data = typeof row.app_data === "string" ? parseJsonSafe(row.app_data) : row.app_data;
 
       const practice =
         typeof data?.practice_name === "string" ? normalizePracticeName(data.practice_name) : "";
@@ -341,14 +336,14 @@ router.post("/public", async (req, res) => {
 
     const flags = treatmentsToFlags(suggestedTreatments);
 
-    // Store Healthie provider id into patients.provider_id
     const provider_id = healthieProviderId;
 
     const result = await pool.query(
       `
       INSERT INTO patients (
         provider_id,
-        full_name,
+        first_name,
+        last_name,
         date_of_birth,
         mobile,
         email,
@@ -361,16 +356,17 @@ router.post("/public", async (req, res) => {
         tx_insomnia_meds_mgmt
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,
-        $7,$8,$9,$10,$11,$12
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,$11,$12,$13
       )
       RETURNING id
       `,
       [
         provider_id,
-        name.trim(),
+        String(firstName).trim(),
+        String(lastName).trim(),
         dateOfBirth,
-        mobile.trim(),
+        String(mobile).trim(),
         (email || "").trim() || null,
         isi,
         Boolean(flags.tx_cbti),
