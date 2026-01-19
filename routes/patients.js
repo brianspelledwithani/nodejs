@@ -2,6 +2,20 @@ const express = require("express");
 const router = express.Router();
 const { pool } = require("./db");
 
+const AUTHORIZER_GRAPHQL_URL =
+  process.env.AUTHORIZER_GRAPHQL_URL ||
+  "https://authorizer-production-8e06.up.railway.app/graphql";
+
+const AUTHORZER_PROFILE_QUERY = `
+  query {
+    profile {
+      id
+      email
+      app_data
+    }
+  }
+`;
+
 /**
  * Treatment labels coming from the React UI (strings in suggestedTreatments[])
  * We map these to boolean columns in Postgres.
@@ -39,9 +53,101 @@ function parseJsonSafe(text) {
   }
 }
 
+function parseAppData(value) {
+  if (!value) return null;
+  if (typeof value === "string") return parseJsonSafe(value);
+  if (typeof value === "object") return value;
+  return null;
+}
+
 function normalizePracticeName(value) {
   return String(value || "").trim().toLowerCase();
 }
+
+function extractHealthieProviderId(appData) {
+  const candidate =
+    appData?.healthie_provider_id ??
+    appData?.healthie_providerId ??
+    appData?.healthie_id;
+  if (candidate === undefined || candidate === null) return null;
+  const id = String(candidate).trim();
+  return id ? id : null;
+}
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  return authHeader.slice(7).trim() || null;
+}
+
+async function fetchAuthorizerProfile(accessToken) {
+  const response = await fetch(AUTHORIZER_GRAPHQL_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ query: AUTHORZER_PROFILE_QUERY }),
+  });
+
+  const body = parseJsonSafe(await response.text());
+
+  if (!response.ok || body?.errors?.length) {
+    const message =
+      body?.errors?.[0]?.message || "Unable to verify session.";
+    const error = new Error(message);
+    error.status = 401;
+    throw error;
+  }
+
+  const profile = body?.data?.profile;
+  if (!profile) {
+    const error = new Error("Unable to verify session.");
+    error.status = 401;
+    throw error;
+  }
+
+  return profile;
+}
+
+/**
+ * GET /api/patients
+ * Secure: derive provider_id from Authorizer access token (app_data.healthie_provider_id).
+ */
+router.get("/", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Missing access token." });
+    }
+
+    let profile;
+    try {
+      profile = await fetchAuthorizerProfile(token);
+    } catch (error) {
+      return res.status(401).json({ error: "Invalid or expired token." });
+    }
+
+    const appData = parseAppData(profile.app_data);
+    const providerId = extractHealthieProviderId(appData);
+
+    if (!providerId) {
+      return res.status(403).json({
+        error: "No healthie_provider_id found for this user.",
+      });
+    }
+
+    const result = await pool.query(
+      "SELECT * FROM patients WHERE provider_id = $1 ORDER BY id DESC",
+      [providerId]
+    );
+
+    return res.json({ patients: result.rows, provider_id: providerId });
+  } catch (err) {
+    console.error("GET /api/patients error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
 
 /**
  * POST /api/patients
@@ -169,9 +275,9 @@ router.post("/public", async (req, res) => {
         typeof data?.practice_name === "string" ? normalizePracticeName(data.practice_name) : "";
 
       if (practice && practice === wantedPractice) {
-        const hid = data?.healthie_provider_id ?? data?.healthie_providerId ?? data?.healthie_id;
-        if (hid !== undefined && hid !== null && String(hid).trim()) {
-          healthieProviderId = String(hid).trim();
+        const hid = extractHealthieProviderId(data);
+        if (hid) {
+          healthieProviderId = hid;
           break;
         }
       }
