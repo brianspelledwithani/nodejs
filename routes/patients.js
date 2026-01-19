@@ -149,6 +149,47 @@ router.get("/", async (req, res) => {
   }
 });
 
+
+router.get("/:id", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing access token." });
+
+    let profile;
+    try {
+      profile = await fetchAuthorizerProfile(token);
+    } catch (_err) {
+      return res.status(401).json({ error: "Invalid or expired token." });
+    }
+
+    const appData = parseAppData(profile.app_data);
+    const providerId = extractHealthieProviderId(appData);
+    if (!providerId) {
+      return res.status(403).json({ error: "No healthie_provider_id found for this user." });
+    }
+
+    const result = await pool.query(
+      "SELECT * FROM patients WHERE id = $1 AND provider_id = $2 LIMIT 1",
+      [req.params.id, providerId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Patient not found." });
+    }
+
+    return res.json({ patient: result.rows[0] });
+  } catch (err) {
+    console.error("GET /api/patients/:id error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+
+
+
+
+
 /**
  * POST /api/patients
  * Logged-in flow later. For now expects provider_id in request body.
