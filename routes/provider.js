@@ -73,6 +73,24 @@ function validateFields(input, requiredFields) {
   return requiredFields.filter((field) => !input[field]);
 }
 
+function extractPracticeAndHealthieId(appData) {
+  const practiceName =
+    typeof appData?.practice_name === "string" ? appData.practice_name.trim() : "";
+
+  const hid =
+    appData?.healthie_provider_id ??
+    appData?.healthie_providerId ??
+    appData?.healthie_id;
+
+  const healthieProviderId =
+    hid === undefined || hid === null ? "" : String(hid).trim();
+
+  return {
+    practiceName,
+    healthie_provider_id: healthieProviderId,
+  };
+}
+
 async function createReferringProvider(input) {
   const healthieUrl =
     process.env.HEALTHIE_GRAPHQL_URL || "https://api.gethealthie.com/graphql";
@@ -206,34 +224,48 @@ function handleApiError(res, error) {
   });
 }
 
-// ✅ pulls practice_name values from Authorizer users
+/**
+ * GET /api/provider/practices
+ * Returns [{ practiceName, healthie_provider_id }] so the frontend can store the ID directly.
+ */
 router.get("/practices", async (_req, res) => {
   try {
     const result = await pool.query(
       "SELECT app_data FROM authorizer_users WHERE app_data IS NOT NULL"
     );
 
-    const practices = new Set();
+    const byPractice = new Map(); // practiceNameLower -> {practiceName, healthie_provider_id}
 
     for (const row of result.rows) {
+      let data = null;
+
       try {
-        const data =
-          typeof row.app_data === "string"
-            ? JSON.parse(row.app_data)
-            : row.app_data;
-
-        const name =
-          typeof data?.practice_name === "string"
-            ? data.practice_name.trim()
-            : "";
-
-        if (name) practices.add(name);
+        data = typeof row.app_data === "string" ? JSON.parse(row.app_data) : row.app_data;
       } catch (_err) {
-        // ignore malformed app_data
+        continue; // ignore malformed app_data
+      }
+
+      const { practiceName, healthie_provider_id } = extractPracticeAndHealthieId(data);
+      if (!practiceName) continue;
+
+      const key = practiceName.trim().toLowerCase();
+      if (!byPractice.has(key)) {
+        byPractice.set(key, { practiceName, healthie_provider_id: healthie_provider_id || "" });
+      } else {
+        // If we already have it but missing the id, fill it
+        const existing = byPractice.get(key);
+        if (!existing.healthie_provider_id && healthie_provider_id) {
+          existing.healthie_provider_id = healthie_provider_id;
+          byPractice.set(key, existing);
+        }
       }
     }
 
-    res.json({ practices: Array.from(practices).sort() });
+    const practices = Array.from(byPractice.values()).sort((a, b) =>
+      a.practiceName.localeCompare(b.practiceName)
+    );
+
+    res.json({ practices });
   } catch (err) {
     console.error("load practices failed", err);
     res.status(500).json({ message: "Unable to load practices." });
